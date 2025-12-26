@@ -50,16 +50,22 @@ async def on_model(callback: types.CallbackQuery, state: FSMContext):
     model_key = callback.data.replace("model_", "")
     await state.update_data(chosen_model=model_key)
 
-    # Получаем красивое название из словаря
     nice_name = MODEL_NAMES.get(model_key, model_key.replace("_", " ").title())
 
+    # ИСПРАВЛЕНИЕ: Сначала редактируем старое сообщение БЕЗ reply_markup
     await callback.message.edit_text(
-        f"🎯 **Выбрана модель:** {nice_name}\n\n"
+        f"🎯 **Выбрана модель:** {nice_name}",
+        parse_mode="Markdown"
+    )
+
+    # ИСПРАВЛЕНИЕ: Отправляем НОВОЕ сообщение с кнопкой отмены (Reply Keyboard)
+    await callback.message.answer(
         f"✍️ **Введите описание изменений:**\n"
         f"Напишите максимально подробно, что именно добавить или изменить на фото.",
         reply_markup=cancel_kb(),
         parse_mode="Markdown"
     )
+
     await state.set_state(PhotoProcess.waiting_for_prompt)
     await callback.answer()
 
@@ -142,9 +148,15 @@ async def on_duration(callback: types.CallbackQuery, state: FSMContext):
     duration = int(callback.data.split("_")[2])
     await state.update_data(duration=duration)
 
+    # ИСПРАВЛЕНИЕ: Здесь та же логика — редактируем текст без reply_markup
     await callback.message.edit_text(
-        f"✅ Длительность: **{duration} сек**.\n\n"
-        f"✍️ **Опишите движение на видео:**\nНапример: 'девушка плавно поворачивает голову и улыбается'.",
+        f"✅ Длительность: **{duration} сек**.",
+        parse_mode="Markdown"
+    )
+
+    await callback.message.answer(
+        "✍️ **Опишите движение на видео:**\nНапример: 'девушка плавно поворачивает голову и улыбается'.",
+        reply_markup=cancel_kb(),
         parse_mode="Markdown"
     )
     await state.set_state(PhotoProcess.waiting_for_video_prompt)
@@ -167,7 +179,7 @@ async def on_video_prompt(message: types.Message, state: FSMContext):
 
     status_msg = await message.answer(
         f"🎬 **Оживляю фото (Kling 2.5, {duration}с)...**\n\n"
-        f"⏳ Процесс может занять до 20 минут из-за высокой очереди. Я пришлю результат сюда!",
+        f"⏳ Процесс может занять до 20 минут. Я пришлю результат сюда!",
         parse_mode="Markdown"
     )
 
@@ -192,7 +204,7 @@ async def on_video_prompt(message: types.Message, state: FSMContext):
             await state.clear()
         else:
             await message.answer(
-                "⚠️ Не удалось дождаться генерации видео. Сервер перегружен, попробуйте позже.",
+                "⚠️ Не удалось дождаться генерации видео. Попробуйте позже.",
                 reply_markup=main_kb()
             )
     except Exception as e:
