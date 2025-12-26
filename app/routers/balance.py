@@ -3,7 +3,18 @@ import database as db
 
 router = Router()
 
+
 @router.message(F.text == "👤 Мой баланс")
 async def balance(message: types.Message):
-    bal = db.get_balance(message.from_user.id)
-    await message.answer(f"💰 Ваш баланс: **{bal}** генераций.")
+    user_id = message.from_user.id
+    bal = db.get_balance(user_id)
+
+    # Оформляем красивый вывод профиля
+    text = (
+        f"👤 **Ваш профиль**\n"
+        f"┣ ID: `{user_id}`\n"
+        f"┗ Баланс: **{bal}** ⚡\n\n"
+        f" _Нажмите на ID, чтобы скопировать его для поддержки._"
+    )
+
+    await message.answer(text, parse_mode="Markdown")
