@@ -8,10 +8,11 @@ load_dotenv()
 POLZA_API_KEY = os.getenv("POLZA_API_KEY")
 BASE_URL = "https://api.polza.ai/api/v1"
 
+# Актуальные ID моделей из твоих справочников
 MODELS_MAP = {
     "nanabanana": "nano-banana",
-    "nanabanana_pro": "google/gemini-3-pro-image-preview",
-    "seadream": "seedream-v4.5"
+    "nanabanana_pro": "gemini-3-pro-image-preview",
+    "seadream": "seedream-v4"  # В доке 4.0 указано v4
 }
 
 
@@ -36,64 +37,75 @@ async def process_with_polza(prompt: str, model_type: str, image_url: str = None
         "Content-Type": "application/json"
     }
 
-    # 1. Отправляем запрос на генерацию
+    # Базовый payload
     payload = {
         "model": model_id,
-        "prompt": prompt,
-        "n": 1,
-        "size": "1024x1024"
+        "prompt": prompt
     }
+
+    # Добавляем фото, если оно есть (массив по доке)
     if image_url:
-        payload["image_url"] = image_url
+        payload["filesUrl"] = [image_url]
+
+    # Настройка параметров под конкретную модель
+    if model_type == "nanabanana_pro":
+        payload["aspect_ratio"] = "1:1"
+        payload["resolution"] = "1K"
+    elif model_type == "seadream":
+        payload["size"] = "1:1"
+        payload["imageResolution"] = "1K"
+    else:  # обычная nanabanana
+        payload["size"] = "1:1"
 
     try:
         async with aiohttp.ClientSession() as session:
+            # 1. Отправка генерации
             async with session.post(f"{BASE_URL}/images/generations", headers=headers, json=payload) as resp:
-                if resp.status not in [200, 201, 202]:
-                    err = await resp.text()
-                    print(f"❌ Ошибка создания задачи: {resp.status} | {err}")
-                    return None, None
-
                 data = await resp.json()
-                request_id = data.get("requestId")
-
-                if not request_id:
-                    print(f"❌ Не получили requestId. Ответ: {data}")
+                if resp.status not in [200, 201]:
+                    print(f"❌ Ошибка старта: {resp.status} | {data}")
                     return None, None
 
-            # 2. Цикл проверки статуса (Polling)
-            print(f"⏳ Задача {request_id} создана, ждем результат...")
+                request_id = data.get("requestId")
+                if not request_id:
+                    print(f"❌ ID не получен: {data}")
+                    return None, None
 
-            # Проверяем каждые 3 секунды, максимум 2 минуты (40 итераций)
-            for i in range(40):
-                await asyncio.sleep(3)
+            # 2. Опрос статуса по эндпоинту /api/v1/images/{id}
+            print(f"⏳ Задача {request_id} ({model_type}) в работе...")
 
-                # Эндпоинт получения результата по requestId
-                async with session.get(f"{BASE_URL}/get_result", headers=headers,
-                                       params={"requestId": request_id}) as s_resp:
+            for i in range(60):  # Ждем до 4 минут (на 4К может быть долго)
+                await asyncio.sleep(4)
+
+                async with session.get(f"{BASE_URL}/images/{request_id}", headers=headers) as s_resp:
                     if s_resp.status != 200:
                         continue
 
                     result = await s_resp.json()
 
-                    # Проверяем, есть ли ссылка в ответе
-                    # Формат может быть result['url'] или result['data'][0]['url']
-                    res_url = result.get("url") or result.get("image_url")
-                    if not res_url and "data" in result:
-                        res_url = result["data"][0].get("url")
+                    # Логика поиска ссылки в ответе
+                    # Polza может вернуть или в корне 'url', или в массиве 'images'
+                    res_url = result.get("url")
+                    if not res_url and "images" in result and result["images"]:
+                        res_url = result["images"][0]
+                    if not res_url and "result" in result:
+                        if isinstance(result["result"], str):
+                            res_url = result["result"]
+                        elif isinstance(result["result"], dict):
+                            res_url = result["result"].get("url")
 
                     if res_url:
-                        print(f"✅ Картинка готова на итерации {i + 1}!")
+                        print(f"✅ Успешно! Итерация {i + 1}")
                         return await _download_image_bytes(res_url)
 
-                    # Если есть поле статуса и оно 'failed'
-                    if result.get("status") == "error" or result.get("status") == "failed":
-                        print(f"❌ Polza AI сообщила об ошибке: {result}")
+                    # Если API вернуло статус ошибки
+                    if result.get("status") in ["error", "failed"]:
+                        print(f"❌ Ошибка выполнения в API: {result}")
                         return None, None
 
-            print("❌ Превышено время ожидания (timeout)")
+            print("❌ Время ожидания истекло.")
 
     except Exception as e:
-        print(f"❌ Исключение в network.py: {e}")
+        print(f"❌ Ошибка: {e}")
 
     return None, None
