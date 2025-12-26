@@ -21,9 +21,8 @@ async def cancel_text(message: types.Message, state: FSMContext):
 @router.message(F.text == "📸 Начать фотосессию")
 async def start_photo(message: types.Message, state: FSMContext):
     user_id = message.from_user.id
-    # Проверяем баланс сразу (минимум 1 для обычной бананы)
     if db.get_balance(user_id) < 1:
-        return await message.answer("❌ У вас закончились генерации.")
+        return await message.answer("❌ У вас недостаточно генераций.")
 
     await message.answer("🖼 Пришлите фотографию, которую хотите изменить:", reply_markup=cancel_kb())
     await state.set_state(PhotoProcess.waiting_for_photo)
@@ -38,16 +37,20 @@ async def on_photo(message: types.Message, state: FSMContext):
 
 @router.callback_query(F.data.startswith("model_"))
 async def on_model(callback: types.CallbackQuery, state: FSMContext):
-    # ИСПРАВЛЕНО: забираем всё, что после "model_", включая "_pro"
+    # Корректно забираем ID модели (например, nanabanana_pro)
     model = callback.data.replace("model_", "")
-
     await state.update_data(chosen_model=model)
 
+    # Безопасное имя для отображения (без нижних подчеркиваний для Markdown)
     model_display = model.replace("_", " ").upper()
-    await callback.message.edit_text(f"✅ Выбрана модель: **{model_display}**")
+
+    await callback.message.edit_text(
+        f"✅ Выбрана модель: **{model_display}**",
+        parse_mode="Markdown"
+    )
     await callback.message.answer(
         "✍️ **Введите описание изменений:**\n"
-        "(Например: сделай меня в стиле киберпанк или добавь татуировки)",
+        "Напишите, что именно добавить или изменить на фото.",
         reply_markup=cancel_kb(),
         parse_mode="Markdown"
     )
@@ -69,22 +72,20 @@ async def on_prompt(message: types.Message, state: FSMContext):
 
     user_id = message.from_user.id
     data = await state.get_data()
-
-    # Модель теперь корректно сохранится как "nanabanana_pro"
-    model = data.get("chosen_model")
+    model = data.get("chosen_model", "nanabanana")
     prompt = message.text
 
     cost = cost_for(model)
-
     if not has_balance(user_id, cost):
         await state.clear()
-        return await message.answer(
-            f"❌ Для этой модели нужно {cost} ген. У вас меньше.",
-            reply_markup=main_kb()
-        )
+        return await message.answer(f"❌ Нужно {cost} ген. Ваш баланс меньше.", reply_markup=main_kb())
 
+    # ИСПРАВЛЕНО: Добавлен parse_mode и безопасное имя модели
+    model_safe = model.replace("_", " ").upper()
     status_msg = await message.answer(
-        f"⏳ Магия началась... Используем **{model.upper()}**\nЭто может занять до минуты.")
+        f"🚀 Генерация **{model_safe}**...\nПожалуйста, подождите.",
+        parse_mode="Markdown"
+    )
 
     try:
         photo_url = await get_telegram_photo_url(message.bot, data["photo_id"])
@@ -95,26 +96,29 @@ async def on_prompt(message: types.Message, state: FSMContext):
             new_balance = db.get_balance(user_id)
             file = BufferedInputFile(img_bytes, filename=f"result.{ext or 'png'}")
 
+            # ИСПРАВЛЕНО: Финальное сообщение с результатом
             await message.answer_photo(
                 photo=file,
                 caption=(
-                    f"✨ **Результат готов!**\n\n"
-                    f"👤 Модель: `{model}`\n"
+                    f"✨ **Готово!**\n\n"
+                    f"👤 Модель: `{model_safe}`\n"
                     f"📝 Промпт: _{prompt}_\n"
                     f"💰 Списано: {cost} ген.\n"
-                    f"🔋 Остаток: {new_balance} ген."
+                    f"🔋 Баланс: {new_balance} ген."
                 ),
                 reply_markup=main_kb(),
                 parse_mode="Markdown"
             )
         else:
-            await message.answer(
-                "❌ Нейросеть не смогла обработать фото. Попробуйте другой промпт. Баланс не списан.",
-                reply_markup=main_kb()
-            )
+            await message.answer("❌ Ошибка нейросети. Попробуйте другой промпт.", reply_markup=main_kb())
+
     except Exception as e:
-        print(f"Error in on_prompt: {e}")
-        await message.answer("❌ Произошла ошибка при обработке. Попробуйте позже.")
+        print(f"❌ Error: {e}")
+        await message.answer("❌ Произошла ошибка. Баланс сохранен.", reply_markup=main_kb())
     finally:
-        await status_msg.delete()
+        # Удаляем сообщение о начале генерации
+        try:
+            await status_msg.delete()
+        except:
+            pass
         await state.clear()
