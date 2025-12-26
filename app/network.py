@@ -35,47 +35,60 @@ async def _download_content_bytes(url: str):
 
 
 async def process_with_polza(prompt: str, model_type: str, image_url: str = None):
-    """Генерация фото"""
+    """Генерация фото с сохранением оригинальных пропорций"""
     if not POLZA_API_KEY:
         return None, None
 
     model_id = MODELS_MAP.get(model_type)
     headers = {"Authorization": f"Bearer {POLZA_API_KEY}", "Content-Type": "application/json"}
 
+    # Базовый запрос
     payload = {
         "model": model_id,
         "prompt": f"{prompt} (High quality photo edit, photorealistic)",
-        "strength": 0.7 if image_url else None
     }
-    if image_url: payload["filesUrl"] = [image_url]
 
-    # Настройки разрешений
+    # Если передано изображение, добавляем его и параметр силы изменений
+    if image_url:
+        payload["filesUrl"] = [image_url]
+        payload["strength"] = 0.7
+
+    # ИСПРАВЛЕНИЕ: Убрали принудительные "size": "1:1" и "aspect_ratio": "1:1"
+    # Теперь API Polza будет использовать пропорции входного файла
     if model_type == "nanabanana_pro":
-        payload.update({"aspect_ratio": "1:1", "resolution": "1K"})
-    else:
-        payload.update({"size": "1:1"})
+        payload.update({"resolution": "1K"})
 
     try:
         async with aiohttp.ClientSession() as session:
             async with session.post(f"{BASE_URL}/images/generations", headers=headers, json=payload) as resp:
                 data = await resp.json()
                 request_id = data.get("requestId")
-                if not request_id: return None, None
+                if not request_id:
+                    print(f"❌ Ошибка API (фото): {data}")
+                    return None, None
 
+            # Ожидание готовности
             for i in range(60):
                 await asyncio.sleep(4)
                 async with session.get(f"{BASE_URL}/images/{request_id}", headers=headers) as s_resp:
                     if s_resp.status != 200: continue
                     result = await s_resp.json()
+
+                    # Проверяем URL в разных полях ответа
                     res_url = result.get("url") or (result.get("images")[0] if result.get("images") else None)
-                    if res_url: return await _download_content_bytes(res_url)
-                    if result.get("status") in ["error", "failed"]: break
+
+                    if res_url:
+                        return await _download_content_bytes(res_url)
+
+                    if result.get("status") in ["error", "failed"]:
+                        print(f"❌ Нейросеть вернула ошибку: {result}")
+                        break
     except Exception as e:
         print(f"❌ Ошибка в network (фото): {e}")
     return None, None
 
 
-# --- ОБНОВЛЕННАЯ ФУНКЦИЯ ДЛЯ KLING 2.5 ---
+# --- ФУНКЦИЯ ДЛЯ KLING 2.5 (Видео) ---
 
 async def process_video_polza(prompt: str, image_url: str, duration: int):
     """Генерация видео Kling 2.5 (Image-to-Video)"""
@@ -83,6 +96,8 @@ async def process_video_polza(prompt: str, image_url: str, duration: int):
         return None, None
 
     headers = {"Authorization": f"Bearer {POLZA_API_KEY}", "Content-Type": "application/json"}
+
+    # Kling 2.5 автоматически подхватывает пропорции из imageUrls
     payload = {
         "model": "kling2.5-image-to-video",
         "prompt": prompt,
@@ -100,9 +115,8 @@ async def process_video_polza(prompt: str, image_url: str, duration: int):
                     print(f"❌ Видео API ошибка: {data}")
                     return None, None
 
-            print(f"⏳ Видео {request_id} создано. Начинаю опрос статуса...")
+            print(f"⏳ Видео {request_id} создано. Ожидание генерации...")
 
-            # Увеличено до 300 итераций (300 * 5 сек = 25 минут)
             for i in range(300):
                 await asyncio.sleep(5)
                 async with session.get(f"{BASE_URL}/videos/{request_id}", headers=headers) as s_resp:
@@ -110,7 +124,6 @@ async def process_video_polza(prompt: str, image_url: str, duration: int):
                     result = await s_resp.json()
                     status = result.get("status")
 
-                    # Печатаем статус в консоль каждые 30 секунд
                     if i % 6 == 0:
                         print(f"LOG: Видео {request_id} статус -> {status}")
 
@@ -124,8 +137,6 @@ async def process_video_polza(prompt: str, image_url: str, duration: int):
                     if status in ["error", "failed"]:
                         print(f"❌ Ошибка Kling: {result}")
                         break
-
-            print(f"⚠️ Видео {request_id} завершилось по таймауту (25 мин).")
 
     except Exception as e:
         print(f"❌ Ошибка в network (видео): {e}")
