@@ -44,3 +44,13 @@ def use_generation(user_id: int):
 def add_balance(user_id: int, count: int):
     """Старая функция для совместимости (прибавляет count)"""
     return update_balance(user_id, count)
+
+def log_payment(user_id: int, amount: int, status: str, order_id: str, raw_data: dict):
+    """Записывает данные о платеже в таблицу payment_logs"""
+    return supabase.table("payment_logs").insert({
+        "user_id": user_id,
+        "amount": amount,
+        "status": status,
+        "order_id": order_id,
+        "raw_data": raw_data
+    }).execute()
