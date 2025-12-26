@@ -66,8 +66,7 @@ async def on_prompt(message: types.Message, state: FSMContext):
         await state.clear()
         return await message.answer(f"❌ Нужно {cost} ген.", reply_markup=main_kb())
 
-    model_safe = model.replace("_", " ").upper()
-    status_msg = await message.answer(f"🚀 Генерация **{model_safe}**...", parse_mode="Markdown")
+    status_msg = await message.answer(f"🚀 Генерация {model.upper()}...", parse_mode="Markdown")
 
     try:
         photo_url = await get_telegram_photo_url(message.bot, data["photo_id"])
@@ -82,25 +81,28 @@ async def on_prompt(message: types.Message, state: FSMContext):
                 reply_markup=main_kb(),
                 parse_mode="Markdown"
             )
+            await state.clear()
         else:
-            await message.answer("❌ Ошибка нейросети.", reply_markup=main_kb())
+            await message.answer("❌ Ошибка нейросети. Попробуйте другой промпт.", reply_markup=main_kb())
     except Exception as e:
-        await message.answer(f"❌ Произошла ошибка: {e}")
+        print(f"❌ Error in photo: {e}")
+        await message.answer("❌ Ошибка системы. Баланс сохранен.")
     finally:
         try:
             await status_msg.delete()
         except:
             pass
-        await state.clear()
 
 
-# --- БЛОК ОЖИВЛЕНИЯ (VIDEO-TO-VIDEO / KLING) ---
+# --- БЛОК ОЖИВЛЕНИЯ (IMAGE-TO-VIDEO / KLING 2.5) ---
 
 @router.message(F.text == "🎬 Оживить фото")
 async def start_video(message: types.Message, state: FSMContext):
     user_id = message.from_user.id
+    print(f"DEBUG: Пользователь {user_id} инициировал Kling")
+
     if db.get_balance(user_id) < 5:
-        return await message.answer("❌ Для видео нужно минимум 5 генераций.")
+        return await message.answer("❌ Для оживления видео нужно минимум 5 генераций.")
 
     await message.answer("🎬 Пришлите фото, которое вы хотите оживить:", reply_markup=cancel_kb())
     await state.set_state(PhotoProcess.waiting_for_video_photo)
@@ -123,48 +125,63 @@ async def on_duration(callback: types.CallbackQuery, state: FSMContext):
     duration = int(callback.data.split("_")[2])
     await state.update_data(duration=duration)
 
-    await callback.message.edit_text(f"✅ Длительность: **{duration} сек**.\n\n✍️ Опишите движение на видео:",
-                                     parse_mode="Markdown")
+    await callback.message.edit_text(
+        f"✅ Длительность: **{duration} сек**.\n\n✍️ Опишите движение (например: 'человек смеется'):",
+        parse_mode="Markdown"
+    )
     await state.set_state(PhotoProcess.waiting_for_video_prompt)
     await callback.answer()
 
 
 @router.message(PhotoProcess.waiting_for_video_prompt)
 async def on_video_prompt(message: types.Message, state: FSMContext):
-    if message.text == "❌ Отменить": return await cancel_text(message, state)
+    if message.text == "❌ Отменить":
+        return await cancel_text(message, state)
 
+    user_id = message.from_user.id
     data = await state.get_data()
     duration = data.get("duration", 5)
     model_key = f"kling_{duration}"
     cost = cost_for(model_key)
-    user_id = message.from_user.id
 
     if not has_balance(user_id, cost):
         return await message.answer(f"❌ Нужно {cost} ген.", reply_markup=main_kb())
 
-    status_msg = await message.answer(f"🎬 Оживляю фото через Kling 2.5 ({duration}с)...\nЭто займет несколько минут.")
+    status_msg = await message.answer(
+        f"🎬 Оживляю фото (Kling 2.5, {duration}с)...\nПроцесс может занять до 20 минут. Ожидайте.",
+        parse_mode="Markdown"
+    )
+
+    print(f"DEBUG: Старт генерации видео для {user_id}. Промпт: {message.text}")
 
     try:
         photo_url = await get_telegram_photo_url(message.bot, data["photo_id"])
+        # Вызываем функцию из generation.py
         video_bytes, ext = await generate_video(photo_url, message.text, duration)
 
         if video_bytes:
+            print(f"DEBUG: Видео получено для {user_id}")
             charge(user_id, cost)
             video_file = BufferedInputFile(video_bytes, filename=f"video_{user_id}.mp4")
+
             await message.answer_video(
                 video=video_file,
                 caption=f"✅ Видео готово!\n💰 Списано: {cost} ген.\n🔋 Баланс: {db.get_balance(user_id)} ген.",
                 reply_markup=main_kb(),
                 parse_mode="Markdown"
             )
+            await state.clear()
         else:
-            await message.answer("❌ Ошибка при генерации видео.", reply_markup=main_kb())
+            print(f"DEBUG: Видео НЕ получено (Таймаут/Ошибка) для {user_id}")
+            await message.answer(
+                "⚠️ Не удалось дождаться видео. Вероятно, сервер перегружен. Попробуйте позже.",
+                reply_markup=main_kb()
+            )
     except Exception as e:
-        print(f"Error: {e}")
-        await message.answer("❌ Ошибка системы.")
+        print(f"❌ ERROR KLING: {e}")
+        await message.answer("❌ Ошибка при создании видео.", reply_markup=main_kb())
     finally:
         try:
             await status_msg.delete()
         except:
             pass
-        await state.clear()
