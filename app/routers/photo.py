@@ -1,12 +1,12 @@
 from aiogram import Router, types, F
 from aiogram.fsm.context import FSMContext
-from aiogram.types import BufferedInputFile
+from aiogram.types import BufferedInputFile, InlineKeyboardMarkup, InlineKeyboardButton
 
 from app.states import PhotoProcess
 from app.keyboards.reply import main_kb, cancel_kb
 from app.keyboards.inline import model_inline
 from app.services.telegram_file import get_telegram_photo_url
-from app.services.generation import cost_for, has_balance, generate, charge
+from app.services.generation import cost_for, has_balance, generate, charge, generate_video
 import database as db
 
 router = Router()
@@ -17,6 +17,8 @@ async def cancel_text(message: types.Message, state: FSMContext):
     await state.clear()
     await message.answer("Действие отменено.", reply_markup=main_kb())
 
+
+# --- БЛОК ФОТОСЕССИИ (IMAGE-TO-IMAGE) ---
 
 @router.message(F.text == "📸 Начать фотосессию")
 async def start_photo(message: types.Message, state: FSMContext):
@@ -37,20 +39,13 @@ async def on_photo(message: types.Message, state: FSMContext):
 
 @router.callback_query(F.data.startswith("model_"))
 async def on_model(callback: types.CallbackQuery, state: FSMContext):
-    # Корректно забираем ID модели (например, nanabanana_pro)
     model = callback.data.replace("model_", "")
     await state.update_data(chosen_model=model)
-
-    # Безопасное имя для отображения (без нижних подчеркиваний для Markdown)
     model_display = model.replace("_", " ").upper()
 
-    await callback.message.edit_text(
-        f"✅ Выбрана модель: **{model_display}**",
-        parse_mode="Markdown"
-    )
+    await callback.message.edit_text(f"✅ Выбрана модель: **{model_display}**", parse_mode="Markdown")
     await callback.message.answer(
-        "✍️ **Введите описание изменений:**\n"
-        "Напишите, что именно добавить или изменить на фото.",
+        "✍️ **Введите описание изменений:**\nНапишите, что именно добавить или изменить.",
         reply_markup=cancel_kb(),
         parse_mode="Markdown"
     )
@@ -58,65 +53,116 @@ async def on_model(callback: types.CallbackQuery, state: FSMContext):
     await callback.answer()
 
 
-@router.callback_query(F.data == "cancel")
-async def on_cancel(callback: types.CallbackQuery, state: FSMContext):
-    await state.clear()
-    await callback.message.answer("❌ Действие отменено.", reply_markup=main_kb())
-    await callback.answer()
-
-
 @router.message(PhotoProcess.waiting_for_prompt)
 async def on_prompt(message: types.Message, state: FSMContext):
-    if message.text == "❌ Отменить":
-        return await cancel_text(message, state)
+    if message.text == "❌ Отменить": return await cancel_text(message, state)
 
     user_id = message.from_user.id
     data = await state.get_data()
     model = data.get("chosen_model", "nanabanana")
-    prompt = message.text
-
     cost = cost_for(model)
+
     if not has_balance(user_id, cost):
         await state.clear()
-        return await message.answer(f"❌ Нужно {cost} ген. Ваш баланс меньше.", reply_markup=main_kb())
+        return await message.answer(f"❌ Нужно {cost} ген.", reply_markup=main_kb())
 
-    # ИСПРАВЛЕНО: Добавлен parse_mode и безопасное имя модели
     model_safe = model.replace("_", " ").upper()
-    status_msg = await message.answer(
-        f"🚀 Генерация **{model_safe}**...\nПожалуйста, подождите.",
-        parse_mode="Markdown"
-    )
+    status_msg = await message.answer(f"🚀 Генерация **{model_safe}**...", parse_mode="Markdown")
 
     try:
         photo_url = await get_telegram_photo_url(message.bot, data["photo_id"])
-        img_bytes, ext = await generate(photo_url, prompt, model)
+        img_bytes, ext = await generate(photo_url, message.text, model)
 
         if img_bytes:
             charge(user_id, cost)
-            new_balance = db.get_balance(user_id)
-            file = BufferedInputFile(img_bytes, filename=f"result.{ext or 'png'}")
-
-            # ИСПРАВЛЕНО: Финальное сообщение с результатом
+            file = BufferedInputFile(img_bytes, filename=f"res.{ext or 'png'}")
             await message.answer_photo(
                 photo=file,
-                caption=(
-                    f"✨ **Готово!**\n\n"
-                    f"👤 Модель: `{model_safe}`\n"
-                    f"📝 Промпт: _{prompt}_\n"
-                    f"💰 Списано: {cost} ген.\n"
-                    f"🔋 Баланс: {new_balance} ген."
-                ),
+                caption=f"✨ **Готово!**\n💰 Списано: {cost} ген.\n🔋 Баланс: {db.get_balance(user_id)} ген.",
                 reply_markup=main_kb(),
                 parse_mode="Markdown"
             )
         else:
-            await message.answer("❌ Ошибка нейросети. Попробуйте другой промпт.", reply_markup=main_kb())
-
+            await message.answer("❌ Ошибка нейросети.", reply_markup=main_kb())
     except Exception as e:
-        print(f"❌ Error: {e}")
-        await message.answer("❌ Произошла ошибка. Баланс сохранен.", reply_markup=main_kb())
+        await message.answer(f"❌ Произошла ошибка: {e}")
     finally:
-        # Удаляем сообщение о начале генерации
+        try:
+            await status_msg.delete()
+        except:
+            pass
+        await state.clear()
+
+
+# --- БЛОК ОЖИВЛЕНИЯ (VIDEO-TO-VIDEO / KLING) ---
+
+@router.message(F.text == "🎬 Оживить фото")
+async def start_video(message: types.Message, state: FSMContext):
+    user_id = message.from_user.id
+    if db.get_balance(user_id) < 5:
+        return await message.answer("❌ Для видео нужно минимум 5 генераций.")
+
+    await message.answer("🎬 Пришлите фото, которое вы хотите оживить:", reply_markup=cancel_kb())
+    await state.set_state(PhotoProcess.waiting_for_video_photo)
+
+
+@router.message(PhotoProcess.waiting_for_video_photo, F.photo)
+async def on_video_photo(message: types.Message, state: FSMContext):
+    await state.update_data(photo_id=message.photo[-1].file_id)
+
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="5 секунд (5 ⚡)", callback_data="v_dur_5")],
+        [InlineKeyboardButton(text="10 секунд (10 ⚡)", callback_data="v_dur_10")]
+    ])
+    await message.answer("⏳ Выберите длительность видео:", reply_markup=kb)
+    await state.set_state(PhotoProcess.waiting_for_duration)
+
+
+@router.callback_query(F.data.startswith("v_dur_"))
+async def on_duration(callback: types.CallbackQuery, state: FSMContext):
+    duration = int(callback.data.split("_")[2])
+    await state.update_data(duration=duration)
+
+    await callback.message.edit_text(f"✅ Длительность: **{duration} сек**.\n\n✍️ Опишите движение на видео:",
+                                     parse_mode="Markdown")
+    await state.set_state(PhotoProcess.waiting_for_video_prompt)
+    await callback.answer()
+
+
+@router.message(PhotoProcess.waiting_for_video_prompt)
+async def on_video_prompt(message: types.Message, state: FSMContext):
+    if message.text == "❌ Отменить": return await cancel_text(message, state)
+
+    data = await state.get_data()
+    duration = data.get("duration", 5)
+    model_key = f"kling_{duration}"
+    cost = cost_for(model_key)
+    user_id = message.from_user.id
+
+    if not has_balance(user_id, cost):
+        return await message.answer(f"❌ Нужно {cost} ген.", reply_markup=main_kb())
+
+    status_msg = await message.answer(f"🎬 Оживляю фото через Kling 2.5 ({duration}с)...\nЭто займет несколько минут.")
+
+    try:
+        photo_url = await get_telegram_photo_url(message.bot, data["photo_id"])
+        video_bytes, ext = await generate_video(photo_url, message.text, duration)
+
+        if video_bytes:
+            charge(user_id, cost)
+            video_file = BufferedInputFile(video_bytes, filename=f"video_{user_id}.mp4")
+            await message.answer_video(
+                video=video_file,
+                caption=f"✅ Видео готово!\n💰 Списано: {cost} ген.\n🔋 Баланс: {db.get_balance(user_id)} ген.",
+                reply_markup=main_kb(),
+                parse_mode="Markdown"
+            )
+        else:
+            await message.answer("❌ Ошибка при генерации видео.", reply_markup=main_kb())
+    except Exception as e:
+        print(f"Error: {e}")
+        await message.answer("❌ Ошибка системы.")
+    finally:
         try:
             await status_msg.delete()
         except:

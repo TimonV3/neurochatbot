@@ -4,6 +4,7 @@ def main_kb():
     return ReplyKeyboardMarkup(
         keyboard=[
             [KeyboardButton(text="📸 Начать фотосессию")],
+            [KeyboardButton(text="🎬 Оживить фото")], # Новая кнопка
             [KeyboardButton(text="👤 Мой баланс"), KeyboardButton(text="💳 Пополнить")]
         ],
         resize_keyboard=True
