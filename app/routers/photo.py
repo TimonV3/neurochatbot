@@ -52,13 +52,13 @@ async def on_model(callback: types.CallbackQuery, state: FSMContext):
 
     nice_name = MODEL_NAMES.get(model_key, model_key.replace("_", " ").title())
 
-    # ИСПРАВЛЕНИЕ: Сначала редактируем старое сообщение БЕЗ reply_markup
+    # Редактируем старое сообщение без reply_markup, чтобы избежать ValidationError
     await callback.message.edit_text(
         f"🎯 **Выбрана модель:** {nice_name}",
         parse_mode="Markdown"
     )
 
-    # ИСПРАВЛЕНИЕ: Отправляем НОВОЕ сообщение с кнопкой отмены (Reply Keyboard)
+    # Отправляем новое сообщение с клавиатурой отмены
     await callback.message.answer(
         f"✍️ **Введите описание изменений:**\n"
         f"Напишите максимально подробно, что именно добавить или изменить на фото.",
@@ -76,6 +76,16 @@ async def on_prompt(message: types.Message, state: FSMContext):
 
     user_id = message.from_user.id
     data = await state.get_data()
+
+    # ПРОВЕРКА: Если photo_id нет в памяти (KeyError)
+    if "photo_id" not in data:
+        await state.clear()
+        return await message.answer(
+            "⚠️ **Ошибка сессии:** фото не найдено.\nПожалуйста, начните сначала.",
+            reply_markup=main_kb(),
+            parse_mode="Markdown"
+        )
+
     model = data.get("chosen_model", "nanabanana")
     cost = cost_for(model)
 
@@ -148,7 +158,6 @@ async def on_duration(callback: types.CallbackQuery, state: FSMContext):
     duration = int(callback.data.split("_")[2])
     await state.update_data(duration=duration)
 
-    # ИСПРАВЛЕНИЕ: Здесь та же логика — редактируем текст без reply_markup
     await callback.message.edit_text(
         f"✅ Длительность: **{duration} сек**.",
         parse_mode="Markdown"
@@ -170,6 +179,16 @@ async def on_video_prompt(message: types.Message, state: FSMContext):
 
     user_id = message.from_user.id
     data = await state.get_data()
+
+    # ПРОВЕРКА: Если photo_id нет в памяти для видео
+    if "photo_id" not in data:
+        await state.clear()
+        return await message.answer(
+            "⚠️ **Ошибка сессии:** фото не найдено.\nПожалуйста, начните сначала.",
+            reply_markup=main_kb(),
+            parse_mode="Markdown"
+        )
+
     duration = data.get("duration", 5)
     model_key = f"kling_{duration}"
     cost = cost_for(model_key)
