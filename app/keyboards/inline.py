@@ -1,13 +1,46 @@
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
-def model_inline():
+
+# --- Выбор модели генерации изображения ---
+def model_inline() -> InlineKeyboardMarkup:
+    """
+    Клавиатура выбора модели ИИ для генерации фото.
+    Цены отражены для удобства пользователя.
+    """
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🍌 NanoBanana (5 ген.)", callback_data="model_nanabanana")],
-        [InlineKeyboardButton(text="🌊 SeaDream (10 ген.)", callback_data="model_seadream")],
-        [InlineKeyboardButton(text="❌ Отмена", callback_data="cancel")]
+        [
+            InlineKeyboardButton(
+                text="🍌 NanoBanana (1 ген.)",
+                callback_data="model_nanabanana"
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                text="⚡ NanoBanana PRO (5 ген.)",
+                callback_data="model_nanabanana_pro"
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                text="🌊 Seedream 4.5 (2 ген.)",
+                callback_data="model_seadream"
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                text="❌ Отмена",
+                callback_data="cancel"
+            )
+        ]
     ])
 
-def buy_inline():
+
+# --- Кнопки пополнения баланса ---
+def buy_inline() -> InlineKeyboardMarkup:
+    """
+    Пакеты оплаты. Названия кнопок можно менять,
+    главное — callback_data сохраняем.
+    """
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="10 ген. — 149₽", callback_data="pay_10_149")],
         [InlineKeyboardButton(text="25 ген. — 375₽", callback_data="pay_25_375")],
