@@ -8,6 +8,18 @@ url: str = os.getenv("SUPABASE_URL")
 key: str = os.getenv("SUPABASE_KEY")
 supabase: Client = create_client(url, key)
 
+def get_users_count():
+    """
+    Возвращает общее количество пользователей в таблице users.
+    Использует встроенный в Supabase метод подсчета строк.
+    """
+    try:
+        # Запрашиваем данные с параметром count='exact', чтобы получить общее число строк
+        response = supabase.table("users").select("*", count="exact").execute()
+        return response.count if response.count is not None else 0
+    except Exception as e:
+        print(f"❌ Ошибка Supabase при подсчете пользователей: {e}")
+        return 0
 
 def get_balance(user_id: int):
     response = supabase.table("users").select("balance").eq("user_id", user_id).execute()
