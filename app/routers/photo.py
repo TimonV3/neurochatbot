@@ -1,4 +1,5 @@
 from aiogram import Router, types, F
+from aiogram.filters import Command  # Импорт для работы команды /counters
 from aiogram.fsm.context import FSMContext
 from aiogram.types import BufferedInputFile, InlineKeyboardMarkup, InlineKeyboardButton
 
@@ -17,6 +18,22 @@ MODEL_NAMES = {
     "nanabanana_pro": "💎 Nano Banana PRO",
     "seadream": "🎨 SeaDream 4.5"
 }
+
+# --- СЛУЖЕБНЫЕ КОМАНДЫ ---
+
+@router.message(Command("counters"))
+async def show_counters(message: types.Message):
+    """Отображает количество пользователей в боте"""
+    try:
+        count = db.get_users_count()
+        await message.answer(
+            f"📊 **Статистика бота**\n\n"
+            f"👤 Всего зарегистрировано: `{count}` пользователей.",
+            parse_mode="Markdown"
+        )
+    except Exception as e:
+        print(f"Ошибка команды counters: {e}")
+        await message.answer("❌ Не удалось получить статистику.")
 
 
 @router.message(F.text == "❌ Отменить")
@@ -52,13 +69,11 @@ async def on_model(callback: types.CallbackQuery, state: FSMContext):
 
     nice_name = MODEL_NAMES.get(model_key, model_key.replace("_", " ").title())
 
-    # Редактируем старое сообщение без reply_markup, чтобы избежать ValidationError
     await callback.message.edit_text(
         f"🎯 **Выбрана модель:** {nice_name}",
         parse_mode="Markdown"
     )
 
-    # Отправляем новое сообщение с клавиатурой отмены
     await callback.message.answer(
         f"✍️ **Введите описание изменений:**\n"
         f"Напишите максимально подробно, что именно добавить или изменить на фото.",
@@ -77,7 +92,6 @@ async def on_prompt(message: types.Message, state: FSMContext):
     user_id = message.from_user.id
     data = await state.get_data()
 
-    # ПРОВЕРКА: Если photo_id нет в памяти (KeyError)
     if "photo_id" not in data:
         await state.clear()
         return await message.answer(
@@ -180,7 +194,6 @@ async def on_video_prompt(message: types.Message, state: FSMContext):
     user_id = message.from_user.id
     data = await state.get_data()
 
-    # ПРОВЕРКА: Если photo_id нет в памяти для видео
     if "photo_id" not in data:
         await state.clear()
         return await message.answer(
@@ -210,6 +223,7 @@ async def on_video_prompt(message: types.Message, state: FSMContext):
             charge(user_id, cost)
             video_file = BufferedInputFile(video_bytes, filename=f"video_{user_id}.mp4")
 
+            # Возвращаем стандартную отправку как VIDEO
             await message.answer_video(
                 video=video_file,
                 caption=(
