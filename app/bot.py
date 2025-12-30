@@ -3,22 +3,29 @@ from aiogram import Bot, Dispatcher
 from aiogram.enums import ParseMode
 from aiogram.client.default import DefaultBotProperties
 from aiogram.client.session.aiohttp import AiohttpSession
+from aiogram.client.telegram import TelegramAPIServer
 from .config import get_settings
 
 settings = get_settings()
 
-# 1. Настраиваем сессию с увеличенным таймаутом
-# Это даст боту 60 секунд на ответ от серверов Telegram вместо стандартных 10
-# Также добавлена поддержка прокси через переменную окружения (если она есть)
+# Получаем прокси из переменных окружения
+proxy_url = os.getenv("PROXY_URL")
+
+# 1. Настройка сессии
+# Добавляем trust_env=True, чтобы aiohttp мог подхватывать системные настройки
 session = AiohttpSession(
     timeout=60,
-    proxy=os.getenv("PROXY_URL")  # Можно добавить в настройки Railway, если нужно
+    proxy=proxy_url if proxy_url else None
 )
 
-# 2. Инициализируем бота с использованием новой сессии
+# 2. Настройка кастомного сервера (опционально)
+# Если даже с прокси не идет, можно раскомментировать строку ниже для работы через зеркало
+# custom_api = TelegramAPIServer.from_base("https://api.tgproxy.me")
+
 bot = Bot(
     token=settings.bot_token,
     session=session,
+    # Если используешь зеркало, добавь: server=custom_api
     default=DefaultBotProperties(parse_mode=ParseMode.MARKDOWN)
 )
 
